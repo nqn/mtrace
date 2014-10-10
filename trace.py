@@ -122,14 +122,20 @@ def main():
     stat("cpus:\t\t", cpus_list)
     stat("mem:\t\t", mem_list)
 
+    plt.subplot(2, 1, 1)
     num_bins = 50
     n, bins, patches = plt.hist(durations, num_bins, normed=0, facecolor='green', alpha=0.5)
     plt.xlabel('Duration (seconds)')
     plt.ylabel('Frequency')
     plt.title('Task duration')
 
+    plt.subplot(2, 1, 2)
+    plt.scatter(cpus_list, mem_list)
+    plt.xlabel('CPUs')
+    plt.ylabel('Memory (MB)')
+
     plt.subplots_adjust(left=0.15)
-    plt.savefig('durations.png')
+    plt.savefig('trace.png')
 
 
 if __name__ == "__main__":
