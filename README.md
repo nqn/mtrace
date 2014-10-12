@@ -13,3 +13,6 @@ duration (sec):  [ mean: 4.952523        stdev: 7.714514        max: 30.047476  
 ## Output
 
 ![cpus](http://cl.ly/image/1y392j302U1M/cpus.png)
+![mem](http://cl.ly/image/2x1L1i3P0K04/mem.png)
+![cpusvsmem](http://cl.ly/image/2Z3s2I0p3J1d/download/cpus-mem.png)
+![duration](http://cl.ly/image/0n1o0f0k0R1w/durations.png)
