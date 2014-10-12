@@ -1,6 +1,5 @@
 import sys
 import re
-import numpy
 import matplotlib.pyplot as plt
 import json as js
 
