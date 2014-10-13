@@ -17,10 +17,14 @@ class trace:
         # Compile regular expressions up front.
         self.re_is_task_status = re.compile('.*Status update.*')
         self.re_is_launch = re.compile('.*Launching task.*')
+        self.re_is_slave_attach = re.compile('.*Adding slave.*')
+        self.re_is_slave_detach = re.compile('.*Removing slave.*')
 
         # TODO(nnielsen): Standardize UUID parsing.
         self.filter_task = re.compile("I\d+ (.*) \d+ master\.cpp.* Status update (\w+) .* for task (.*) of framework (.*) from slave.*")
         self.filter_launch = re.compile("I\d+ (.*) \d+ master\.cpp.* Launching task (.*) of framework ([0-9\-]+).* with resources (.*) on slave.*")
+        self.filter_slave_attach = re.compile("I\d+ (.*) \d+ master\.cpp.* Adding slave (.*) at .* with (.*)")
+        self.filter_slave_detach = re.compile("I\d+ (.*) \d+ master\.cpp.* Removing slave (.*) at .*")
 
         self.filter_cpus = re.compile(".*cpus\(\*\):([0-9\.]+).*")
         self.filter_mem = re.compile(".*mem\(\*\):(\d+).*")
@@ -33,11 +37,11 @@ class trace:
         def is_task_status_or_launch(s):
             is_task = self.re_is_task_status.match(s) is not None
             is_launch = self.re_is_launch.match(s) is not None
-            # TODO(nnielsen): is_slave_attach
-            # TODO(nnielsen): is_slave_detach
+            is_slave_attach = self.re_is_slave_attach.match(s) is not None
+            is_slave_detach = self.re_is_slave_detach.match(s) is not None
             # TODO(nnielsen): is_framework_attach
             # TODO(nnielsen): is_framework_detach
-            return is_task or is_launch
+            return is_task or is_launch or is_slave_attach or is_slave_detach
 
         filtered_list = ifilter(is_task_status_or_launch, open(f))
         for line in filtered_list:
@@ -46,7 +50,7 @@ class trace:
     def adjust_day(self, current):
         if self.last_timestamp is None:
             self.last_timestamp = current
-            return
+            return current
         if self.last_timestamp > current:
             self.day += 1
         self.last_timestamp = current
@@ -57,17 +61,9 @@ class trace:
         def parse_timestamp(s):
             return datetime.strptime(s, "%H:%M:%S.%f")
 
-
-        launch_m = self.filter_launch.match(line)
-        if launch_m is not None:
-            timestamp = parse_timestamp(launch_m.group(1))
-            task_id = launch_m.group(2)
-            framework_id = launch_m.group(3)
-            resources = launch_m.group(4)
+        def parse_resources(resources):
             cpus = 0.0
             mem = 0
-
-            timestamp = self.adjust_day(timestamp)
 
             cpus_m = self.filter_cpus.match(resources)
             if cpus_m is not None:
@@ -80,6 +76,22 @@ class trace:
                 mem = int(mem_m.group(1))
             else:
                 print "Could not parse mem in %s" % resources
+
+            return (cpus, mem)
+            
+
+        launch_m = self.filter_launch.match(line)
+        if launch_m is not None:
+            timestamp = parse_timestamp(launch_m.group(1))
+            task_id = launch_m.group(2)
+            framework_id = launch_m.group(3)
+            resources = launch_m.group(4)
+            cpus = 0.0
+            mem = 0
+
+            timestamp = self.adjust_day(timestamp)
+
+            (cpus, mem) = parse_resources(resources)
 
             self.cluster.add_task(framework_id, task_id, cpus, mem)
 
@@ -98,8 +110,30 @@ class trace:
 
             return
 
-        # TODO(nnielsen): slave_attach_m = filter_slave_attach
-        # TODO(nnielsen): slave_detach_m = filter_slave_detach
+        slave_attach_m = self.filter_slave_attach.match(line)
+        if slave_attach_m is not None:
+            timestamp = parse_timestamp(slave_attach_m.group(1))
+            slave_id = slave_attach_m.group(2)
+            resources = slave_attach_m.group(3)
+            (cpus, mem) = parse_resources(resources)
+
+            timestamp = self.adjust_day(timestamp)
+
+            if timestamp is None:
+                print line
+
+            self.cluster.add_slave(timestamp, slave_id, cpus, mem)
+            return
+
+        slave_detach_m = self.filter_slave_detach.match(line)
+        if slave_detach_m is not None:
+            timestamp = parse_timestamp(slave_detach_m.group(1))
+            slave_id = slave_detach_m.group(2)
+
+            timestamp = self.adjust_day(timestamp)
+
+            self.cluster.remove_slave(timestamp, slave_id)
+            return
 
     def write(self, output):
         #
@@ -113,12 +147,15 @@ class trace:
 class cluster:
     def __init__(self):
         self.frameworks = {}
+        self.slaves = {}
 
-    def add_slave(self, slave_id, resources):
-        pass
+    def add_slave(self, timestamp, slave_id, cpus, mem):
+        self.slaves[slave_id] = slave(timestamp, slave_id, cpus, mem)
 
-    def remove_slave(self, slave_id):
-        pass
+    def remove_slave(self, timestamp, slave_id):
+        if slave_id not in self.slaves:
+            return
+        self.slaves[slave_id].detach(timestamp)
 
     def add_task(self, framework_id, task_id, cpus, mem):
         if framework_id not in self.frameworks:
@@ -143,7 +180,38 @@ class cluster:
         out = {}
         out["tasks"] = tasks
 
+
+        slaves = []
+        for slave_id in self.slaves:
+            s = self.slaves[slave_id]
+            slaves.append(s.json())
+
+        out["slaves"] = slaves
+
         return out
+
+
+class slave:
+    def __init__(self, timestamp, slave_id, cpus, mem):
+        self.slave_id = slave_id
+        self.cpus = cpus
+        self.mem = mem
+        self.started = timestamp
+        self.ended = None
+
+    def detach(self, timestamp):
+        self.ended = timestamp
+
+    def json(self):
+        out = {}
+        out["slave_id"] = self.slave_id
+        out["time_started"] = self.started.isoformat()
+        if self.ended is not None:
+            out["time_ended"] = self.ended.isoformat()
+        out["cpus"] = self.cpus
+        out["mem"] = self.mem
+        return out
+
 
 class framework:
     def __init__(self, framework_id):
@@ -170,6 +238,7 @@ class framework:
                 tasks.append(task_json)
         # TODO(nnielsen): Return structured data with framework info (attached, detached, ...)
         return tasks
+
 
 class task:
     def __init__(self, framework_id, task_id, cpus, mem):
